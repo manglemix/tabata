@@ -1,11 +1,10 @@
 from typing import Union
-from math import sqrt, nan, isnan, inf, ceil, floor
+from math import sqrt, nan, isnan, inf
 import numpy as np
 from numpy import dot
 from numpy.linalg import norm as length
-from time import time
 
-TYPE_ARRAY = Union[list, tuple]
+TYPE_ARRAY = Union[list, tuple, np.ndarray]
 
 
 def quad_formula(a: float, b: float, c: float, neg=False) -> float:
@@ -38,9 +37,9 @@ def vector(*args) -> np.ndarray:
     return np.array(args, float)
 
 
-def normalized(vector: np.ndarray) -> np.ndarray:
+def normalized(vec: np.ndarray) -> np.ndarray:
     """Returns the unit/normalized vector of the vector given"""
-    return vector / length(vector)
+    return vec / length(vec)
 
 
 def generate_pairs(array: TYPE_ARRAY) -> tuple:
@@ -52,7 +51,7 @@ def generate_pairs(array: TYPE_ARRAY) -> tuple:
 
 
 class Particle:
-    def __init__(self, radius=1, mass=1, origin=np.zeros(2, float), velocity=np.zeros(2, float), name=None):
+    def __init__(self, radius: float = 1, mass: float = 1, origin: TYPE_ARRAY = np.zeros(2, float), velocity: TYPE_ARRAY = np.zeros(2, float), id=None):
         """
         A particle shaped like a circle or sphere
         Can participate in Particle-Particle collisions
@@ -67,7 +66,7 @@ class Particle:
         """
         self.radius = radius
         self.mass = mass
-        self.name = None
+        self.id = id
 
         if type(origin) != np.ndarray:
             self.origin = vector(*origin)
@@ -78,6 +77,10 @@ class Particle:
             self.velocity = vector(*velocity)
         else:
             self.velocity = velocity
+
+    def process(self, t: float) -> None:
+        """Performs a time based calculation"""
+        self.origin += self.velocity * t
 
     def check_collision(self, other: "Particle") -> bool:
         """Returns True if this Particle is intersecting another particle"""
@@ -123,8 +126,8 @@ class BondingParticle(Particle):
             self.elastic_collide(other)
 
 
-class System:
-    def __init__(self, particles: TYPE_ARRAY, bounds=((-100, 100), (-100, 100))):
+class EventSystem:
+    def __init__(self, particles: TYPE_ARRAY, bounds: TYPE_ARRAY = ((-100, 100), (-100, 100))):
         """
         Defines a space in which Particles can move around
 
@@ -153,11 +156,11 @@ class System:
 
         return {"out_of_bounds": out_of_bounds, "intersecting": intersecting}
 
-    def get_system_statistics(self, params=("origin", "velocity")) -> dict:
+    def get_system_statistics(self, params: TYPE_ARRAY = ("origin", "velocity")) -> dict:
         """Returns a dictionary of the params of each particle in the system"""
-        return {particle.name: {param: getattr(particle, param) for param in params} for particle in self.particles}
+        return {particle.id: {param: getattr(particle, param) for param in params} for particle in self.particles}
 
-    def process(self, max_time=100, max_collisions=10) -> None:
+    def process(self, max_time: float = 100, max_collisions: int = 10) -> None:
         """
         Runs the system until the simulation time exceeds max_time, or more collisions than max_collisions have occurred
         """
@@ -200,13 +203,13 @@ class System:
             if len(next_t) == 0 or t + min_t > max_time:
                 finish_t = self.time + min_t - max_time
                 for particle in self.particles:
-                    particle.origin += particle.velocity * finish_t
+                    particle.process(finish_t)
 
                 self.time += max_time
                 return
 
             for particle in self.particles:
-                particle.origin += particle.velocity * min_t
+                particle.process(min_t)
 
             t += min_t
             min_index = next_t.index(min_t)
@@ -226,3 +229,31 @@ class System:
     def get_total_collisions(self) -> int:
         """Returns the total number of collisions which have occurred"""
         return self._collisions
+
+
+class SequentialSystem(EventSystem):
+    def process(self, max_time=100, max_collisions=10, delta_t: float = 0.01) -> None:
+        """
+        Runs the system until the simulation time exceeds max_time, or more collisions than max_collisions have occurred
+        delta_t is the time step of the simulation; smaller values are more accurate, but take longer to calculate
+        """
+        collisions = 0
+        for t in range(int(max_time / delta_t)):
+            for particle, other in generate_pairs(self.particles):
+                if particle.check_collision(other):
+                    particle.handle_collision(other)
+                    collisions += 1
+
+                    if collisions == max_collisions:
+                        self.time += t * delta_t
+                        self._collisions += collisions
+                        return
+
+            for particle in self.particles:
+                for i, bound in enumerate(self.bounds):
+                    axis_position = particle.origin[i]
+                    if axis_position < min(bound) or axis_position > max(bound):
+                        particle.velocity[i] *= -1
+
+            for particle in self.particles:
+                particle.process(delta_t)
